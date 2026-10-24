@@ -238,7 +238,11 @@ def find_port():
 class LiveSource:
     def __init__(self, port, outdir):
         import serial
-        self.ser = serial.Serial(port, 115200, timeout=0.2)
+        try:
+            self.ser = serial.Serial(port, 115200, timeout=0.2)
+        except serial.SerialException as e:
+            sys.exit(f"Cannot open {port}: {e}\nClose the Arduino IDE Serial Monitor/Plotter "
+                     "(or any other program using the port) and try again.")
         os.makedirs(outdir, exist_ok=True)
         self.path = os.path.join(outdir, time.strftime("session_%Y%m%d_%H%M%S.csv"))
         self.log = open(self.path, "w")
