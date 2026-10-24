@@ -343,6 +343,7 @@ def run_ui(engine, src, replay):
         return lambda _e: src.send(c, note)
 
     def learn(_e):
+        src.send("G")                               # kill latches on the board; learning needs it running
         src.send("X0", "LEARN")
 
     def reset(_e):
@@ -382,8 +383,12 @@ def run_ui(engine, src, replay):
                 src.ser.write((code + "\n").encode())
         state_txt.set_text(engine.state)
         state_txt.set_color(STATE_COLORS.get(engine.state, "black"))
-        cause_txt.set_text(engine.cause or ("learning baseline: %d/%d s" % (len(engine.learning), BASELINE_S)
-                                            if engine.learning is not None else ""))
+        stopped = bool(engine.windows) and not engine._running(engine.windows[-1])
+        if engine.learning is not None:
+            cause_txt.set_text("learning baseline: %d/%d s" % (len(engine.learning), BASELINE_S)
+                               + ("  (motor stopped: press Start / Go)" if stopped else ""))
+        else:
+            cause_txt.set_text(engine.cause or ("motor stopped: press Start / Go" if stopped else ""))
         W = engine.windows[-120:]
         if not W:
             return []
