@@ -92,3 +92,13 @@ is not wired, so the dashboard's Brake ON/OFF clicks are only time markers in th
 - **Caveat:** the thresholds were chosen from and checked on this same session. That is one session on
   one rig, not a held-out validation. The earlier buzzer session, run through the same rules, gives
   only brief WARNINGs and no FAULT, consistent with the buzzer not seeing the lump.
+
+# Run 2 (`sessions/2026-10-24_run2_prefix_baseline_bug.csv`)
+
+Second run on the same rig: Learn + Go clicked together, manual eraser brake, then a tape lump.
+The dashboard version used live had a bug: baseline learning included the spin-up seconds. That
+inflated the baseline line sd to 5.51 Hz, so live it only showed WARNINGs (z 3.0–4.1) and never FAULT.
+The fix: learning now skips the 4 s settle after a start. Replaying the same file with the fixed code
+gives a baseline line of 58.73 ± 2.00 Hz and amplitude 2.32 ± 0.34. Brake → WARNING 1869 s, FAULT 1871 s
+(marker clicked at 1862 s). Tape lump → FAULT 1938 s (Go at 1932 s). No alerts in the healthy stretch
+from 1854 to 1869 s.

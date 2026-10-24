@@ -166,26 +166,28 @@ class Engine:
         return w["duty"] > 0 and not w["killed"]
 
     def _update_state(self, w):
+        if not self._running(w):
+            self.over = self.under = 0
+            self.last_duty = None
+            if self.learning is None and self.baseline:
+                self._set("STOPPED", "kill switch" if w["killed"] else "duty 0")
+            return
+        if w["duty"] != self.last_duty:
+            self.last_duty = w["duty"]
+            self.settle = SETTLE_S
+        if self.settle > 0:                        # spin-up: neither learned nor alerted on
+            self.settle -= 1
+            self.over = self.under = 0
+            if self.learning is None and self.baseline:
+                self._set("HEALTHY", "")
+            return
         if self.learning is not None:
-            if self._running(w) and not w["brake"] and w["rms"] == w["rms"]:
+            if not w["brake"] and w["rms"] == w["rms"]:
                 self.learning.append(w)
             if len(self.learning) >= BASELINE_S:
                 self._finish_baseline()
             return
         if not self.baseline:
-            return
-        if not self._running(w):
-            self.over = self.under = 0
-            self.last_duty = None
-            self._set("STOPPED", "kill switch" if w["killed"] else "duty 0")
-            return
-        if w["duty"] != self.last_duty:
-            self.last_duty = w["duty"]
-            self.settle = SETTLE_S
-        if self.settle > 0:
-            self.settle -= 1
-            self.over = self.under = 0
-            self._set("HEALTHY", "")
             return
         z = self.zscores(w)
         w["z"] = z
