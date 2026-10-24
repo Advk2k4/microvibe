@@ -2,7 +2,7 @@
 // Boots into one A-ramp (up/down), then holds duty 180 and prints one line per second.
 // Serial 115200. Commands (send a line):
 //   H / F   start labelling seconds as HEALTHY / FAULT (stats reset for that label)
-//   P       print summary (mean/std of p2p and edges/s per label)
+//   P       print summary (mean/std of p2p, rms and edges/s per label, plus motor-off noise floor)
 //   R       re-run the A ramp, then return to hold duty
 //   S       stop motor (duty 0)      G   go (back to hold duty)
 //   D<n>    set hold duty 0..255, e.g. D150
@@ -18,7 +18,8 @@ char label='-';                    // '-' unlabelled, 'H', 'F'
 struct Stat { long n=0; double s=0, ss=0; void add(double v){ n++; s+=v; ss+=v*v; }
   double mean() const { return n? s/n : 0; }
   double sd() const { return n>1? sqrt((ss-s*s/n)/(n-1)) : 0; } };
-Stat p2pH, p2pF, edgH, edgF;
+Stat p2pH, p2pF, edgH, edgF, rmsH, rmsF;
+Stat p2pOff, rmsOff;               // seconds with duty 0 = ADC/electrical noise floor, no vibration
 
 const char* resetName(esp_reset_reason_t r){
   switch(r){ case ESP_RST_POWERON: return "POWERON"; case ESP_RST_BROWNOUT: return "BROWNOUT";
@@ -38,10 +39,12 @@ void ramp(){                       // benchtestA, unchanged steps/timing
 
 void summary(){
   Serial.println("# ---- summary ----");
-  Serial.printf("# HEALTHY n=%ld  p2p mean %.1f sd %.1f  edges/s mean %.2f sd %.2f\n",
-    p2pH.n, p2pH.mean(), p2pH.sd(), edgH.mean(), edgH.sd());
-  Serial.printf("# FAULT   n=%ld  p2p mean %.1f sd %.1f  edges/s mean %.2f sd %.2f\n",
-    p2pF.n, p2pF.mean(), p2pF.sd(), edgF.mean(), edgF.sd());
+  Serial.printf("# HEALTHY n=%ld  p2p mean %.1f sd %.1f  rms mean %.2f sd %.2f  edges/s mean %.2f sd %.2f\n",
+    p2pH.n, p2pH.mean(), p2pH.sd(), rmsH.mean(), rmsH.sd(), edgH.mean(), edgH.sd());
+  Serial.printf("# FAULT   n=%ld  p2p mean %.1f sd %.1f  rms mean %.2f sd %.2f  edges/s mean %.2f sd %.2f\n",
+    p2pF.n, p2pF.mean(), p2pF.sd(), rmsF.mean(), rmsF.sd(), edgF.mean(), edgF.sd());
+  Serial.printf("# MOTOROFF n=%ld p2p mean %.1f sd %.1f  rms mean %.2f sd %.2f\n",
+    p2pOff.n, p2pOff.mean(), p2pOff.sd(), rmsOff.mean(), rmsOff.sd());
 }
 
 void handleSerial(){
@@ -51,8 +54,8 @@ void handleSerial(){
     if(c!='\n' && c!='\r'){ buf+=c; continue; }
     buf.trim(); if(!buf.length()) continue;
     char k=toupper(buf[0]);
-    if(k=='H'){ label='H'; p2pH=Stat(); edgH=Stat(); Serial.println("# label HEALTHY"); }
-    else if(k=='F'){ label='F'; p2pF=Stat(); edgF=Stat(); Serial.println("# label FAULT"); }
+    if(k=='H'){ label='H'; p2pH=Stat(); edgH=Stat(); rmsH=Stat(); Serial.println("# label HEALTHY"); }
+    else if(k=='F'){ label='F'; p2pF=Stat(); edgF=Stat(); rmsF=Stat(); Serial.println("# label FAULT"); }
     else if(k=='P') summary();
     else if(k=='R') ramp();
     else if(k=='S'){ setDuty(0); Serial.println("# STOP"); }
@@ -73,32 +76,37 @@ void setup(){
   // A reset reason other than POWERON/USB/EXT after the motor starts = power/ground problem.
   Serial.printf("# boot, reset reason: %s\n", resetName(esp_reset_reason()));
   ramp();
-  Serial.println("t_s,label,duty,p2p_max,p2p_mean,tilt_edges");
+  Serial.println("t_s,label,duty,p2p_max,p2p_mean,rms,tilt_edges,tilt_state");
 }
 
 void loop(){
   static unsigned long sec0=millis();
   static int lastTilt=digitalRead(TILT);
-  static long edges=0, p2pSum=0; static int p2pMax=0, windows=0;
+  static long edges=0, p2pSum=0; static int p2pMax=0, windows=0; static double rmsSum=0;
 
   // benchtestB: 100 ms min/max window; benchtestC tilt polled inside the same window
+  // rms = std dev of the samples in the window; less outlier-driven than p2p
   int mn=4095, mx=0; unsigned long t0=millis();
+  long n=0; int64_t s=0, ss=0;
   while(millis()-t0 < 100){
     int v=analogRead(PIEZO);
     if(v<mn) mn=v; if(v>mx) mx=v;
+    n++; s+=v; ss+=(int64_t)v*v;
     int t=digitalRead(TILT);
     if(t!=lastTilt){ edges++; lastTilt=t; }
   }
   int p2p=mx-mn; p2pSum+=p2p; windows++; if(p2p>p2pMax) p2pMax=p2p;
+  double m=(double)s/n; rmsSum+=sqrt(max(0.0,(double)ss/n-m*m));
   handleSerial();
 
   if(millis()-sec0 >= 1000){
-    float p2pMean=(float)p2pSum/windows;
-    Serial.printf("%lu,%c,%d,%d,%.1f,%ld\n", millis()/1000, label, duty, p2pMax, p2pMean, edges);
+    float p2pMean=(float)p2pSum/windows; float rms=rmsSum/windows;
+    Serial.printf("%lu,%c,%d,%d,%.1f,%.2f,%ld,%d\n", millis()/1000, label, duty, p2pMax, p2pMean, rms, edges, lastTilt);
     if(duty==holdDuty && duty>0){  // only count steady-state seconds at the hold duty
-      if(label=='H'){ p2pH.add(p2pMean); edgH.add(edges); }
-      if(label=='F'){ p2pF.add(p2pMean); edgF.add(edges); }
+      if(label=='H'){ p2pH.add(p2pMean); edgH.add(edges); rmsH.add(rms); }
+      if(label=='F'){ p2pF.add(p2pMean); edgF.add(edges); rmsF.add(rms); }
     }
-    sec0=millis(); edges=0; p2pSum=0; p2pMax=0; windows=0;
+    if(duty==0){ p2pOff.add(p2pMean); rmsOff.add(rms); }
+    sec0=millis(); edges=0; p2pSum=0; p2pMax=0; windows=0; rmsSum=0;
   }
 }
