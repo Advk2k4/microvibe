@@ -22,16 +22,18 @@ MIN_FREQ = 5              # Hz; ignore DC / slow drift when picking the dominant
 SETTLE_S = 4              # ignore alerts this long after a start / duty change; spin-up transient
                           # measured at <= 3 s (sessions/2026-10-24_10k_shunt_lump_test.csv)
 
-# Alert rules: z = (x - baseline mean) / baseline sd, per feature.
-# Set from measurements in bench/RESULTS.md (see README "Alert tuning"); not guessed.
+LINE_BAND = (20, 80)       # Hz; the motor's speed line sits at ~56.5 Hz on this rig at duty 180
+
+# Alert rules: z = (x - baseline mean) / baseline sd, per feature (sd floored at 2% of the mean).
+# Chosen from sessions/2026-10-24_final_brake_lump.csv (bench/RESULTS.md): RMS and p2p did not move
+# under either fault, so they are shown but not alerted on. The speed line moved under both.
 ALERTS = {
     # feature: (z_warn, z_fault, direction)  direction +1 = only rises alert, -1 = only drops, 0 = both
-    "rms":      (3.0, 5.0, +1),
-    "p2p":      (3.0, 5.0, +1),
-    "amp_1x":   (3.0, 5.0, +1),
-    "slip":     (3.0, 5.0, +1),
+    "line_hz":  (3.0, 5.0, 0),
+    "line_amp": (3.0, 5.0, -1),
 }
-FAULT_KIND = {"rms": "vibration", "p2p": "vibration", "amp_1x": "imbalance (1x rotation)",
+FAULT_KIND = {"line_hz": "speed signature shifted", "line_amp": "speed signature weakened",
+              "rms": "vibration level", "p2p": "vibration level", "amp_1x": "1x rotation amplitude",
               "slip": "load / brake drag"}
 
 # Thermistor: 10k NTC from 3V3 to GPIO 2, 10k from GPIO 2 to GND. B=3950 is the usual kit value,
@@ -107,6 +109,8 @@ class Engine:
     # ---- per-second features ----
     def _second(self, f):
         seq_end, duty, killed, brake = int(f[1]), int(f[3]), int(f[4]), int(f[5])
+        if self.windows and abs(seq_end / FS - self.windows[-1]["t"]) > 5:
+            self.windows = []                      # stale lines buffered before the host attached
         pulses, tmin, tmax, tilt, therm = (int(x) for x in f[6:11])
         x = self._window(seq_end - FS, seq_end)
         w = {"t": seq_end / FS, "duty": duty, "killed": killed, "brake": brake, "tilt": tilt,
@@ -122,11 +126,15 @@ class Engine:
             i = int(np.argmax(spec[band]))
             w["dom_hz"] = float(freqs[band][i])
             w["dom_amp"] = float(spec[band][i])
+            lb = (freqs >= LINE_BAND[0]) & (freqs <= LINE_BAND[1])
+            j = int(np.argmax(spec[lb]))
+            w["line_hz"] = float(freqs[lb][j])
+            w["line_amp"] = float(spec[lb][j])
             rot = w["rpm"] / 60.0
             w["amp_1x"] = float(spec[np.abs(freqs - rot) <= 2].max()) if rot == rot and rot >= MIN_FREQ else float("nan")
             self.last_spectrum = (freqs, spec)
         else:
-            for k in ("rms", "p2p", "dom_hz", "dom_amp", "amp_1x"):
+            for k in ("rms", "p2p", "dom_hz", "dom_amp", "amp_1x", "line_hz", "line_amp"):
                 w[k] = float("nan")
         # slip: measured RPM per unit of commanded duty, relative to the baseline ratio
         b = self.baseline
@@ -222,7 +230,7 @@ class Engine:
         ws = self.learning
         self.learning = None
         b = {}
-        for k in ("rms", "p2p", "amp_1x", "dom_hz", "tilt", "rpm"):
+        for k in ("rms", "p2p", "amp_1x", "dom_hz", "line_hz", "line_amp", "tilt", "rpm"):
             v = np.array([w[k] for w in ws if w[k] == w[k]], dtype=float)
             if len(v) >= 10:
                 # sd floor: 2% of the mean, so a perfectly steady feature can't divide by ~0
@@ -382,17 +390,20 @@ def run_ui(engine, src, replay):
         t = np.array([w["t"] for w in W])
         get = lambda k: np.array([w.get(k, float("nan")) for w in W], dtype=float)
 
-        ax_vib.clear(); ax_vib.set_title("Piezo vibration per 1 s window (raw ADC counts, relative)", fontsize=10)
+        ax_vib.clear(); ax_vib.set_title("Vibration pickup per 1 s window (raw ADC counts, relative)", fontsize=10)
         ax_vib.plot(t, get("rms"), label="RMS", color="#534AB7")
-        ax_vib.plot(t, get("amp_1x"), label="1x rotation amplitude", color="#D85A30")
-        if engine.baseline and "rms" in engine.baseline:
-            m, s = engine.baseline["rms"]
-            ax_vib.axhspan(m - s, m + s, color="#534AB7", alpha=0.12, label="baseline RMS ±1sd")
+        ax_vib.plot(t, get("line_amp") * 4, label="speed-line amplitude x4", color="#D85A30")
+        if engine.baseline and "line_amp" in engine.baseline:
+            m, s = engine.baseline["line_amp"]
+            ax_vib.axhspan(4 * (m - s), 4 * (m + s), color="#D85A30", alpha=0.12, label="baseline line amp ±1sd")
         ax_vib.legend(loc="upper left", fontsize=8); ax_vib.set_xlabel("s")
 
-        ax_rpm.clear(); ax_rpm.set_title("Tach RPM (photoresistor) and commanded duty", fontsize=10)
-        ax_rpm.plot(t, get("rpm"), color="#0F6E56", label="RPM")
-        ax_rpm.set_ylabel("RPM")
+        ax_rpm.clear(); ax_rpm.set_title("Speed line frequency (FFT peak %d-%d Hz) and commanded duty" % LINE_BAND, fontsize=10)
+        ax_rpm.plot(t, get("line_hz"), color="#0F6E56", label="speed line")
+        if engine.baseline and "line_hz" in engine.baseline:
+            m, s = engine.baseline["line_hz"]
+            ax_rpm.axhspan(m - 3 * max(s, 0.02 * m), m + 3 * max(s, 0.02 * m), color="#0F6E56", alpha=0.12)
+        ax_rpm.set_ylim(LINE_BAND[0] - 2, LINE_BAND[1] + 2); ax_rpm.set_ylabel("Hz")
         d = ax_rpm.twinx() if not hasattr(update, "rpm_tw") else update.rpm_tw
         update.rpm_tw = d
         d.clear(); d.step(t, get("duty"), color="#888780", where="post", label="duty"); d.set_ylim(0, 270)
@@ -408,29 +419,38 @@ def run_ui(engine, src, replay):
         ax_z.set_xlabel("s")
 
         freqs, spec = engine.last_spectrum
-        ax_spec.clear(); ax_spec.set_title("Latest 1 s piezo spectrum (FFT in Python)", fontsize=10)
+        ax_spec.clear(); ax_spec.set_title("Latest 1 s spectrum (FFT in Python)", fontsize=10)
         if len(freqs):
-            ax_spec.plot(freqs, spec, color="#534AB7", lw=0.8); ax_spec.set_xlim(0, 500)
+            ax_spec.plot(freqs, spec, color="#534AB7", lw=0.8); ax_spec.set_xlim(0, 200)
+            ax_spec.axvspan(*LINE_BAND, color="#0F6E56", alpha=0.08)
             r = W[-1]["rpm"] / 60.0
             if r == r:
                 for mult, c in ((1, "#D85A30"), (BLADES, "#0F6E56")):
                     ax_spec.axvline(r * mult, color=c, ls=":", lw=1)
             ax_spec.set_xlabel("Hz")
 
-        ax_temp.clear(); ax_temp.set_title("Thermistor (approx. °C, B=3950 assumed)", fontsize=10)
-        ax_temp.plot(t, get("temp"), color="#993C1D"); ax_temp.set_xlabel("s")
+        temp = get("temp")
+        ax_temp.clear()
+        if np.isnan(temp).all():
+            ax_temp.set_title("Thermistor: not wired in v1", fontsize=10); ax_temp.set_xticks([]); ax_temp.set_yticks([])
+        else:
+            ax_temp.set_title("Thermistor (approx. °C, B=3950 assumed)", fontsize=10)
+            ax_temp.plot(t, temp, color="#993C1D"); ax_temp.set_xlabel("s")
 
         w = W[-1]
         z = w.get("z", {})
         lines = [f"t           {w['t']:8.1f} s", f"duty        {w['duty']:8d}",
                  f"killed      {w['killed']:8d}", f"brake       {w['brake']:8d}",
                  f"RMS         {w['rms']:8.2f}", f"p2p         {w['p2p']:8.1f}",
-                 f"dominant    {w['dom_hz']:8.1f} Hz", f"1x amp      {w['amp_1x']:8.2f}",
+                 f"speed line  {w['line_hz']:8.1f} Hz", f"line amp    {w['line_amp']:8.2f}",
+                 f"dominant    {w['dom_hz']:8.1f} Hz",
                  f"RPM         {w['rpm']:8.0f}" + ("" if w['rpm'] == w['rpm'] else f"  (tach swing {w['tach_swing']})"),
                  f"slip        {w['slip']*100 if w['slip'] == w['slip'] else float('nan'):8.1f} %",
                  f"tilt edges  {w['tilt']:8d} /s", f"temp        {w['temp']:8.1f} C", f"dT/dt       {w['dTdt']:8.2f} C/min",
                  f"dropped blk {w['dropped']:8d}"]
         lines += ["z " + "  ".join(f"{k}={v:.1f}" for k, (v, _) in z.items())]
+        if w["brake"]:
+            lines += ["BRAKE marker on (manual brake)"]
         lines += ["events:"] + [e[:44] for e in list(engine.events)[-5:]]
         info_txt.set_text("\n".join(lines))
         return []

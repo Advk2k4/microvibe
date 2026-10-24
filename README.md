@@ -28,10 +28,10 @@ Hackachusetts 2026 (Mass AI Coalition), Robotics & hardware track. Solo build.
   Everything else happens in Python on those streamed samples, and the same samples are what
   the replay file contains.
 - Faults:
-  - **Load / brake drag**: a servo arm presses on the fan hub when the dashboard tells it to.
-    Detected through RPM slip (measured RPM per unit of commanded PWM, relative to the baseline).
-  - **Rotor imbalance**: a lump of tape on one blade, applied by hand. See [Results](#results)
-    for what the sensor could and could not see.
+  - **Load / brake drag**: in v1, a pencil eraser pressed by hand on the hub. The servo brake and
+    tach-based slip are in the firmware and dashboard, but were not wired in time.
+  - **Rotor imbalance**: a lump of tape on one blade, applied by hand.
+  - Both are detected through the motor's spectral **speed line**. See [Results](#results).
 - **Kill switch**: a dashboard button sets PWM to 0 and latches until Go or Reset.
 
 ## Hardware (all from a LAFVIN ESP32-S3 starter kit)
@@ -41,8 +41,8 @@ Hackachusetts 2026 (Mass AI Coalition), Robotics & hardware track. Solo build.
 | ESP32-S3-WROOM (8 MB PSRAM), Arduino core 3.3.12 | Sampling, motor/servo control, serial stream |
 | L293D + DC motor + 3-blade fan | The machine under test |
 | Speaker (run backwards) | Vibration pickup. The motor is taped down on top of it |
-| LED + photoresistor | Reflective tachometer: each passing blade bounces light back, 3 pulses per turn |
-| Kit hobby servo | Brake fault injector, pressing on the side of the fan hub |
+| LED + photoresistor | Tachometer: supported in firmware, **not wired in v1** (cut for time) |
+| Kit hobby servo | Brake injector: supported in firmware, **not wired in v1**. The brake is applied by hand |
 | Tilt switch | Crude second vibration channel (counts chatter edges) |
 
 **What it does not have:** no accelerometer, no microphone, no calibrated sensor of any kind.
@@ -73,13 +73,13 @@ one rail.
 |---|---|---|
 | 5 | L293D pin 1 (EN1), PWM 20 kHz, 8-bit | wired |
 | 6 / 7 | L293D pin 2 (IN1) / pin 7 (IN2): HIGH/LOW = forward | wired |
-| 5V pin | L293D pin 8 (+Vmotor) and pin 16 (+V logic); servo red | wired |
+| 5V pin | L293D pin 8 (+Vmotor) and pin 16 (+V logic) | wired |
 | GND | L293D pins 4, 5, 12, 13; everything else | wired |
 | — | L293D pins 3 / 6 → motor leads; pins 9, 10, 15 → GND; 11, 14 empty | wired |
 | 1 (ADC) | Speaker lead A, plus 10k to GND; speaker lead B → GND | wired |
 | 4 | Tilt switch to GND (INPUT_PULLUP) | wired |
-| 10 (ADC) | Photoresistor from 3V3, plus 10k to GND. LED: 3V3 → 220 Ω → LED → GND | wired |
-| 13 | Servo signal (50 Hz, 500–2500 µs) | wired |
+| 10 (ADC) | Tach photoresistor from 3V3, plus 10k to GND (LED: 3V3 → 220 Ω → LED → GND) | in firmware, not wired |
+| 13 | Servo brake signal (50 Hz, 500–2500 µs) | in firmware, not wired |
 | 2 (ADC) | Thermistor, 10k divider | in firmware, not wired |
 | 8 / 9 | LCD1602 I2C SDA / SCL (boot runs an I2C scan) | in firmware, not wired |
 | 14 | Active buzzer (fault alarm) | in firmware, not wired |
@@ -146,10 +146,12 @@ Commands to the ESP32 (one per line):
 
 Per 1 s window (1000 samples):
 - RMS and peak-to-peak (after removing the mean).
-- Hann-windowed FFT: dominant frequency at 5 Hz or above, and the amplitude at the 1× rotation
-  frequency from the tach.
-- RPM = tach pulses × 60 / 3 blades, used only if the photoresistor swing is at least 40 counts.
-- Slip = 1 − (RPM / duty) ÷ baseline(RPM / duty).
+- Hann-windowed FFT:
+  - **speed line**: the frequency and amplitude of the largest peak in 20–80 Hz (the alert features);
+  - dominant frequency at 5 Hz or above;
+  - amplitude at the 1× rotation frequency, when the tach is wired.
+- When the tach is wired: RPM = pulses × 60 / 3 blades (only if the photoresistor swing is at least
+  40 counts), and slip = 1 − (RPM / duty) ÷ baseline(RPM / duty). Not wired in v1.
 
 The baseline is 30 s of healthy running, giving a mean and standard deviation per feature. Alerts are
 z-scores against that baseline:
@@ -188,7 +190,23 @@ detectable with the buzzer front end.**
 
 **Speaker pickup, quick check:** motor off RMS 5.31, motor on RMS 15.67 (about 3×).
 
-<!-- FINAL SESSION RESULTS: filled in from the final recording -->
+**Final session: speaker pickup, manual brake, tape lump** (`sessions/2026-10-24_final_brake_lump.csv`).
+This is the judges' replay file.
+
+The motor has a clean spectral **speed line at 56.48 ± 0.51 Hz** (largest FFT peak in 20–80 Hz) that
+moves with load. RMS stays at about 9 counts in every condition, so loudness is not the signal.
+
+| Condition | speed line Hz | line amplitude | dashboard result (replay) |
+|---|---|---|---|
+| Healthy (21 s, plus released stretches) | 56.8–57.2 | 2.26–2.35 | HEALTHY, no false alerts |
+| Eraser brake on the hub (2 presses) | 40.7 ± 7.9 / 44.9 ± 10.8 | 1.6–1.8 | **FAULT** about 2–3 s after contact |
+| Tape lump on one blade | 38.5 ± 16.8 (wanders 20–80) | 1.02 ± 0.50 | **FAULT** at 1195 s, after the 4 s restart settle |
+
+Alerts fire on the z-score of line frequency and line amplitude: WARNING at 3, FAULT at 5 sustained for
+3 s. Those thresholds were picked from this session and checked on the same session. It is one rig and
+one session, not a held-out test. The brake was a pencil eraser pressed by hand (the servo was cut for
+time), and the dashboard's Brake ON/OFF clicks are only time markers. The detector never reads them.
+Without the tach, it is unknown whether 56.5 Hz is the 1× rotation rate or the 3-blade pass rate.
 
 ## Limitations
 - One cheap, uncalibrated, half-wave-rectified vibration pickup with no anti-alias filter. Amplitudes
@@ -196,8 +214,8 @@ detectable with the buzzer front end.**
 - Small-imbalance detection did not work with the buzzer front end (data above).
 - The motor runs from the board's USB 5 V through an L293D, which drops about 2 V, so the speed range
   is limited. Motor plus servo current on USB can brown out the board.
-- The photoresistor responds in about 10–50 ms, so tach readings at high RPM are unreliable. RPM is
-  only reported when the light swing is clear.
+- There is no tach in v1, so there are no absolute RPM numbers. Load is inferred from the speed line.
+- The faults were applied by hand (eraser, tape), so their severity is not repeatable.
 - The baseline is per session and per duty setting. There is no long-term drift model.
 
 ## Future work
