@@ -8,13 +8,16 @@ measured on this rig, and the measurements that did *not* work are reported too.
 
 Hackachusetts 2026 (Mass AI Coalition), Robotics & hardware track. Solo build.
 
+> **Demo video (silent, about 2 min):** https://drive.google.com/file/d/1WBhOSVz4FCqRZkYgRCOKDjtaB1WR8cLg/view?usp=drivesdk. See [About the demo video](#about-the-demo-video-please-read) for what it shows.
+>
 > **Judges: no hardware needed.** `python3 dashboard/dashboard.py --replay sessions/2026-10-24_final_brake_lump.csv`
 > replays a recorded session through the same detection code that ran live.
 > See [Replay without hardware](#replay-without-hardware).
 
 ## About the demo video (please read)
 
-The demo video was recorded during **run 2** (`sessions/2026-10-24_run2_prefix_baseline_bug.csv`)
+[The demo video](https://drive.google.com/file/d/1WBhOSVz4FCqRZkYgRCOKDjtaB1WR8cLg/view?usp=drivesdk) is silent. It shows the dashboard and rig while baseline learning, a hand-applied
+eraser brake on the fan hub, the kill switch, and a tape lump on one blade happen in turn. It was recorded during **run 2** (`sessions/2026-10-24_run2_prefix_baseline_bug.csv`)
 with an earlier version of the dashboard. That version had a bug: the 30 s baseline included the
 motor's spin-up seconds. This made the "healthy" range too wide (speed line ±5.5 Hz instead of about
 ±0.5–2 Hz). **So in the video, the eraser brake and the tape lump only reach WARNING (z ≈ 3–4), not
