@@ -1,14 +1,14 @@
 # MicroVibe
 
 **A predictive-maintenance fault lab built from a $30 starter kit.** A small DC motor and fan on an
-ESP32-S3 learns a healthy baseline of vibration, RPM and load, then flags injected faults on a live
+ESP32-S3 learns a healthy vibration baseline, then flags injected faults (load drag, rotor imbalance) on a live
 dashboard with a kill switch. Industrial vibration-monitoring rigs cost thousands. This one uses kit
 parts, and its vibration sensor is a **speaker run backwards**. Every result in this README was
 measured on this rig, and the measurements that did *not* work are reported too.
 
 Hackachusetts 2026 (Mass AI Coalition), Robotics & hardware track. Solo build.
 
-> **Judges: no hardware needed.** `python3 dashboard/dashboard.py --replay sessions/<demo>.csv`
+> **Judges: no hardware needed.** `python3 dashboard/dashboard.py --replay sessions/2026-10-24_final_brake_lump.csv`
 > replays a recorded session through the same detection code that ran live.
 > See [Replay without hardware](#replay-without-hardware).
 
@@ -18,9 +18,9 @@ Hackachusetts 2026 (Mass AI Coalition), Robotics & hardware track. Solo build.
  ESP32-S3 (Arduino)                         Laptop (Python)
  ─────────────────                          ───────────────
  sampler task, 1 kHz ── raw vibration ──►   1 s windows: RMS, peak-to-peak,
- tach / tilt counts  ── 1 s stats  ──────►  FFT dominant frequency, RPM, slip
+ tilt / status      ── 1 s stats  ──────►  FFT speed line (freq + amplitude)
  L293D PWM motor     ◄── kill / duty ─────  30 s baseline → z-scores →
- servo brake         ◄── brake on/off ────  HEALTHY / WARNING / FAULT (3 s sustained)
+                                            HEALTHY / WARNING / FAULT (3 s sustained)
                                             records every line → sessions/*.csv
 ```
 
@@ -38,7 +38,7 @@ Hackachusetts 2026 (Mass AI Coalition), Robotics & hardware track. Solo build.
 
 | Part | Role |
 |---|---|
-| ESP32-S3-WROOM (8 MB PSRAM), Arduino core 3.3.12 | Sampling, motor/servo control, serial stream |
+| ESP32-S3-WROOM (8 MB PSRAM), Arduino core 3.3.12 | Sampling, motor control, serial stream |
 | L293D + DC motor + 3-blade fan | The machine under test |
 | Speaker (run backwards) | Vibration pickup. The motor is taped down on top of it |
 | LED + photoresistor | Tachometer: supported in firmware, **not wired in v1** (cut for time) |
@@ -213,7 +213,7 @@ Without the tach, it is unknown whether 56.5 Hz is the 1× rotation rate or the 
   are relative.
 - Small-imbalance detection did not work with the buzzer front end (data above).
 - The motor runs from the board's USB 5 V through an L293D, which drops about 2 V, so the speed range
-  is limited. Motor plus servo current on USB can brown out the board.
+  is limited. A stall can brown out the board.
 - There is no tach in v1, so there are no absolute RPM numbers. Load is inferred from the speed line.
 - The faults were applied by hand (eraser, tape), so their severity is not repeatable.
 - The baseline is per session and per duty setting. There is no long-term drift model.
