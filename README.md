@@ -12,6 +12,29 @@ Hackachusetts 2026 (Mass AI Coalition), Robotics & hardware track. Solo build.
 > replays a recorded session through the same detection code that ran live.
 > See [Replay without hardware](#replay-without-hardware).
 
+## About the demo video (please read)
+
+The demo video was recorded during **run 2** (`sessions/2026-10-24_run2_prefix_baseline_bug.csv`)
+with an earlier version of the dashboard. That version had a bug: the 30 s baseline included the
+motor's spin-up seconds. This made the "healthy" range too wide (speed line ±5.5 Hz instead of about
+±0.5–2 Hz). **So in the video, the eraser brake and the tape lump only reach WARNING (z ≈ 3–4), not
+FAULT.**
+
+The bug was found from that same recording and fixed straight after it (commit `8c5fc1f`): learning
+now skips the 4 s settle after a start, exactly as the alerts already did. There was no time to
+re-shoot the video. Replaying the video's own session through the fixed code gives:
+
+```
+python3 dashboard/dashboard.py --replay sessions/2026-10-24_run2_prefix_baseline_bug.csv --headless
+  baseline line 58.73 ± 2.00 Hz
+  brake (marker 1862 s)  → WARNING 1869 s, FAULT 1871 s
+  tape lump (Go 1932 s)  → FAULT 1938 s
+  no alerts in the healthy stretch (1854–1869 s)
+```
+
+The final session (`sessions/2026-10-24_final_brake_lump.csv`) was learned while the motor was
+already running, so the bug did not affect it. It gives the same results with either version.
+
 ## How it works
 
 ```
@@ -158,7 +181,8 @@ z-scores against that baseline:
 - **WARNING** when a feature passes its warning z.
 - **FAULT** only when a feature stays above its fault z for **3 consecutive seconds**.
 - The state returns to HEALTHY after 5 s back under the warning level.
-- Alerts are ignored for 4 s after a start or duty change. The measured spin-up transient is up to 3 s.
+- The 4 s after a start or duty change are ignored by both the alerts and the baseline learning. The
+  measured spin-up transient is up to 3 s.
 
 Thresholds are in `ALERTS` in `dashboard/dashboard.py`. How they were chosen from the data is in
 [Results](#results).
