@@ -45,8 +45,11 @@ The piezo is uncalibrated, so these are relative numbers, not g or mm/s.
 - Running vs off is still clear (about 2.6x RMS).
 - **The imbalance is not detectable with this front end.** No 10 Hz band from 5 to 500 Hz shifts by
   more than z = 0.5 between healthy and 1 or 2 lumps, and there is no rotation peak in any condition.
-- Likely cause: the 10k shunt across the buzzer disc (roughly 10–30 nF) forms a high-pass filter with
-  a cutoff of about 0.5–1.6 kHz. That cuts off the shaft-rate content (tens of Hz) that imbalance
-  produces. There is also no anti-alias filter before the 1 kHz sampling.
+- Cause not established. One hypothesis: if the buzzer is a piezo disc (roughly 10–30 nF), the 10k
+  shunt makes a high-pass filter with a cutoff of about 0.5–1.6 kHz, removing shaft-rate content.
+  But many kit "passive buzzers" are electromagnetic (a coil of about 16 Ω), and a 10k shunt would not
+  filter those. The buzzer type was not verified (no multimeter). There is also no anti-alias filter
+  before the 1 kHz sampling, and the motor sits on a breadboard, not a rigid mount.
+- After this session the buzzer's GND leg broke, so the shunt-value experiment was not run on it.
 - The restart spin-up transient produced 3 s of high RMS z-scores. The dashboard now ignores alerts for
   4 s after a start or duty change (SETTLE_S).
