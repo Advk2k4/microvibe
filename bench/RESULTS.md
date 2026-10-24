@@ -30,3 +30,23 @@ The piezo is uncalibrated, so these are relative numbers, not g or mm/s.
   can check this with an FFT in Python. Alert thresholds come from that measurement.
 - Earlier, when the motor was not actually spinning (bad ground), 20 kHz PWM alone raised p2p_mean
   from about 52 to about 68. Part of the running signal is electrical coupling, not vibration.
+
+# Session test: 1 kHz raw stream, 10k shunt (`sessions/2026-10-24_10k_shunt_lump_test.csv`)
+
+`firmware/microvibe`, duty 180, raw piezo at 1 kHz, per-second windows (settle seconds excluded).
+
+| Condition | n (s) | RMS mean ± sd (counts) |
+|---|---|---|
+| Motor off | 15 | 3.38 ± 1.45 |
+| Healthy | 28 | 8.94 ± 1.94 |
+| 1 tape lump | 47 | 8.54 ± 1.86 |
+| 2 tape lumps | 32 | 9.09 ± 1.82 |
+
+- Running vs off is still clear (about 2.6x RMS).
+- **The imbalance is not detectable with this front end.** No 10 Hz band from 5 to 500 Hz shifts by
+  more than z = 0.5 between healthy and 1 or 2 lumps, and there is no rotation peak in any condition.
+- Likely cause: the 10k shunt across the buzzer disc (roughly 10–30 nF) forms a high-pass filter with
+  a cutoff of about 0.5–1.6 kHz. That cuts off the shaft-rate content (tens of Hz) that imbalance
+  produces. There is also no anti-alias filter before the 1 kHz sampling.
+- The restart spin-up transient produced 3 s of high RMS z-scores. The dashboard now ignores alerts for
+  4 s after a start or duty change (SETTLE_S).

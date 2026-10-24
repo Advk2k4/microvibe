@@ -19,6 +19,8 @@ BASELINE_S = 30           # seconds of healthy running to learn
 SUSTAIN_S = 3             # a fault must persist this long before FAULT
 CLEAR_S = 5               # seconds back under the warning level before FAULT clears
 MIN_FREQ = 5              # Hz; ignore DC / slow drift when picking the dominant frequency
+SETTLE_S = 4              # ignore alerts this long after a start / duty change; spin-up transient
+                          # measured at <= 3 s (sessions/2026-10-24_10k_shunt_lump_test.csv)
 
 # Alert rules: z = (x - baseline mean) / baseline sd, per feature.
 # Set from measurements in bench/RESULTS.md (see README "Alert tuning"); not guessed.
@@ -60,6 +62,8 @@ class Engine:
         self.last_spectrum = (np.array([]), np.array([]))
         self.seq = 0
         self.transitions = []                      # (t_s, state, cause)
+        self.settle = 0
+        self.last_duty = None
 
     # ---- input ----
     def feed(self, line):
@@ -164,7 +168,16 @@ class Engine:
             return
         if not self._running(w):
             self.over = self.under = 0
+            self.last_duty = None
             self._set("STOPPED", "kill switch" if w["killed"] else "duty 0")
+            return
+        if w["duty"] != self.last_duty:
+            self.last_duty = w["duty"]
+            self.settle = SETTLE_S
+        if self.settle > 0:
+            self.settle -= 1
+            self.over = self.under = 0
+            self._set("HEALTHY", "")
             return
         z = self.zscores(w)
         w["z"] = z
